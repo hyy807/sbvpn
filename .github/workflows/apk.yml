@@ -1,0 +1,83 @@
+name: Build Android APK
+
+# Builds official sing-box-for-android with sbvpn patched core.
+# Core is THIS repo (checked out at root); the Android client is cloned as a sibling.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    name: sbvpn core → Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out sbvpn core
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clone Android client as sibling
+        run: |
+          git clone --depth 1 --branch dev https://github.com/hyy807/sing-box-for-android.git ../sing-box-for-android
+          echo "client: $(git -C ../sing-box-for-android log --oneline -1)"
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Setup Android SDK + NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platforms;android-35
+            ndk;28.0.13004108
+
+      - name: Install gomobile + build libbox.aar
+        run: |
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          go run ./cmd/internal/build_libbox -target android
+          ls -lh libbox.aar
+
+      - name: Place aar in client
+        run: |
+          mkdir -p ../sing-box-for-android/app/libs
+          cp libbox.aar ../sing-box-for-android/app/libs/libbox.aar
+          cp libbox.aar ../sing-box-for-android/app/libs/libbox-legacy.aar
+          ls -lh ../sing-box-for-android/app/libs/
+
+      - name: Build APK
+        working-directory: ../sing-box-for-android
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.0.13004108"
+          chmod +x gradlew
+          ./gradlew :app:clean :app:assembleOtherRelease --no-daemon
+
+      - name: Collect APK
+        run: |
+          mkdir -p output
+          find ../sing-box-for-android/app/build/outputs -name "*.apk" -exec cp {} output/ \;
+          ls -lh output/
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "apk-${GITHUB_RUN_ID}" output/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Android APK (run ${GITHUB_RUN_ID})" \
+            --notes "Unsigned Android APK. sbvpn patched core with LightXtreme private protocol + official sing-box-for-android client."
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-android-apk
+          path: output/*.apk
+          if-no-files-found: error
+          retention-days: 30
