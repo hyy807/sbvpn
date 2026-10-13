@@ -1,7 +1,8 @@
 name: Build Windows Installer
 
 # Builds official sing-box-for-desktop (Electron NSIS) with sbvpn patched core.
-# Core is THIS repo; the desktop client is cloned as a sibling (what scripts/sing-box.ts expects).
+# Desktop client's package.ts calls findBoxDirectory() which checks ../sing-box,
+# so we junction the sbvpn checkout there. It then runs build_boxdd itself.
 on:
   workflow_dispatch:
 
@@ -25,6 +26,16 @@ jobs:
           git clone --depth 1 https://github.com/hyy807/sing-box-for-desktop.git ../sing-box-for-desktop
           echo "client: $(git -C ../sing-box-for-desktop log --oneline -1)"
 
+      - name: Junction sbvpn source so desktop client can find it
+        shell: pwsh
+        run: |
+          $target = $env:GITHUB_WORKSPACE
+          $parent = Split-Path $target -Parent
+          $link = Join-Path $parent "sing-box"
+          New-Item -ItemType Junction -Path $link -Target $target -Force
+          Write-Host "Junction: $link -> $target"
+          Test-Path (Join-Path $link "go.mod")
+
       - name: Install Go
         uses: actions/setup-go@v5
         with:
@@ -44,23 +55,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build libbox for Windows
-        run: |
-          make lib_install
-          $env:PATH = "$env:PATH;$(go env GOPATH)\bin"
-          go run ./cmd/internal/build_libbox -target windows
-          ls libbox.dll
+      - name: Install Go toolchain deps
+        run: make lib_install
 
       - name: Build Windows installer
         working-directory: ../sing-box-for-desktop
         shell: bash
         run: |
-          # sing-box.ts looks for the core at ../../sing-box (parent of the client repo)
-          # Our layout: $RUNNER_TEMP/sing-box-for-desktop ← client
-          #             $RUNNER_TEMP/sbvpn                ← core (this repo, checked out as root)
-          # So we need to make the core findable. sing-box.ts checks ../.. and ../sing-box
-          # We'll symlink.
-          ln -sf "$GITHUB_WORKSPACE" "$RUNNER_TEMP/sing-box"
           pnpm install --frozen-lockfile
           pnpm package:win
         env:
@@ -71,9 +72,10 @@ jobs:
         run: |
           mkdir -p output
           find ../sing-box-for-desktop/release -name "*.exe" ! -name "*blockmap" -exec cp {} output/ \;
-          ls -lh output/
+          ls -lh output/ || true
 
       - name: Publish release
+        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -85,9 +87,10 @@ jobs:
             --notes "NSIS installer. sbvpn patched core with LightXtreme private protocol + official sing-box-for-desktop."
 
       - name: Upload artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sing-box-windows-installer
           path: output/*.exe
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30

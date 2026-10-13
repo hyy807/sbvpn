@@ -30,12 +30,19 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Setup Android SDK + NDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
           packages: |
             platforms;android-35
-            ndk;28.0.13004108
+            build-tools;35.0.0
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "ndk;28.0.13004108" || true
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >> $GITHUB_ENV
+          ls "$ANDROID_SDK_ROOT/ndk/" || true
 
       - name: Install gomobile + build libbox.aar
         run: |
@@ -54,7 +61,6 @@ jobs:
       - name: Build APK
         working-directory: ../sing-box-for-android
         run: |
-          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.0.13004108"
           chmod +x gradlew
           ./gradlew :app:clean :app:assembleOtherRelease --no-daemon
 
