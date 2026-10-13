@@ -1,0 +1,111 @@
+name: Build macOS App (sbvpn core)
+
+# Same as ipa.yml but for macOS: builds Libbox.xcframework for macOS platform,
+# archives the SFM scheme, packages as .dmg.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: sbvpn core + official SFM → unsigned macOS app
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out official sing-box (with clients/apple submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show revisions
+        run: |
+          echo "core: $(git log --oneline -1)"
+          echo "client: $(git -C clients/apple log --oneline -1)"
+
+      - name: Switch client to its dev branch
+        working-directory: clients/apple
+        run: |
+          git fetch --depth 1 origin dev
+          git checkout dev
+          git log --oneline -1
+
+      - name: Inject runtime AppGroup resolution
+        run: |
+          python3 scripts/test_app_groups.py
+          python3 scripts/patch_app_groups.py clients/apple
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build Libbox.xcframework for macOS
+        run: |
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          go run ./cmd/internal/build_libbox -target apple -platform macos
+          rm -rf clients/apple/Libbox.xcframework
+          cp -R Libbox.xcframework clients/apple/Libbox.xcframework
+          du -sh clients/apple/Libbox.xcframework
+
+      - name: Archive SFM (unsigned)
+        working-directory: clients/apple
+        env:
+          DISABLE_SWIFTLINT: '1'
+        run: |
+          xcodebuild archive \
+            -project sing-box.xcodeproj \
+            -scheme SFM \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$RUNNER_TEMP/SFM.xcarchive" \
+            -skipPackagePluginValidation \
+            BASE_PACKAGE_IDENTIFIER=com.mQaKx.AkyLoyU \
+            APP_GROUP_IDENTIFIER=group.57234YHGTV.8FK1 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || true
+          grep -E "error:|Archive Succeeded|ARCHIVE FAILED" "$RUNNER_TEMP/xcodebuild.log" | head -20 || true
+          test -d "$RUNNER_TEMP/SFM.xcarchive" || { echo "=== xcodebuild failed, tail ==="; tail -60 "$RUNNER_TEMP/xcodebuild.log"; exit 1; }
+
+      - name: Package .app + .dmg
+        run: |
+          set -eu
+          app="$RUNNER_TEMP/SFM.xcarchive/Products/Applications/sing-box.app"
+          test -d "$app" || { echo "No .app found"; exit 1; }
+          mkdir -p output
+          # Create a zip of the .app (simpler than dmg, works without signing)
+          ditto -c -k --keepParent "$app" output/sing-box-macos-unsigned.zip
+          # Try to create a DMG too
+          hdiutil create -volname "sing-box" -srcfolder "$app" -ov -format UDZO output/sing-box-macos-unsigned.dmg || true
+          ls -lh output/
+          shasum -a 256 output/*
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "macos-${GITHUB_RUN_ID}" output/sing-box-macos-unsigned.* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Official sing-box macOS App (run ${GITHUB_RUN_ID})" \
+            --notes "Unsigned macOS app from official SagerNet/sing-box + official sing-box-for-apple (SFM scheme). sbvpn patched core with LightXtreme private protocol."
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-macos-app
+          path: output/sing-box-macos-unsigned.*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log-macos
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
