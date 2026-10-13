@@ -30,15 +30,16 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept licenses + install platform + NDK
+      - name: Accept Android SDK licenses + install NDK
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;28.0.13004108"
+          # ubuntu-latest already has Android SDK + cmdline-tools pre-installed
+          export ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}
+          yes | sdkmanager --licenses 2>/dev/null || true
+          sdkmanager --install "ndk;28.0.13004108" 2>/dev/null || true
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >> $GITHUB_ENV
           ls "$ANDROID_SDK_ROOT/ndk/" || true
+          # list what platforms are already installed
+          ls "$ANDROID_SDK_ROOT/platforms/" || true
 
       - name: Install gomobile + build libbox.aar
         run: |
