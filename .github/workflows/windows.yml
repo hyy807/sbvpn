@@ -47,10 +47,8 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install pnpm
+      - name: Install pnpm (from packageManager field)
         uses: pnpm/action-setup@v4
-        with:
-          version: '9'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -62,7 +60,7 @@ jobs:
         working-directory: ../sing-box-for-desktop
         shell: bash
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install
           pnpm package:win
         env:
           GH_TOKEN: ${{ github.token }}
