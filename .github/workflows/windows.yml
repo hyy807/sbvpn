@@ -73,9 +73,9 @@ jobs:
         working-directory: ../sing-box-for-desktop
         shell: bash
         run: |
-          # signing.local.json is required by package.ts even if not signing.
-          # Create an empty one so the build doesn't crash on readFileSync.
-          echo '{}' > signing.local.json
+          # signing.local.json: package.ts requires windows.certificateFile (non-empty) + certificatePassword.
+          # Use a dummy file path — electron-builder will skip signing when the file doesn't exist.
+          echo '{"windows":{"certificateFile":"dummy.pfx","certificatePassword":"dummy"}}' > signing.local.json
           pnpm install
           pnpm package:win
         env:
