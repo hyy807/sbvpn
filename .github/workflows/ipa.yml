@@ -1,0 +1,112 @@
+name: Build iOS IPA (official)
+
+# 纯官方源码（SagerNet/sing-box @ testing）+ 官方 Apple 客户端（子模块 pin），
+# 只加一个东西：AppGroup 运行时回退补丁（scripts/patch_app_groups.py）——
+# 没有它，未授予 application-groups 的签名下官方客户端启动即崩（Swift 强制解包 -> brk #1）。
+#
+# 构建命令全部是官方那套（同 .github/workflows/build.yml 的 build_apple 任务）：
+#   make lib_install
+#   go run ./cmd/internal/build_libbox -target apple -platform ios
+#   xcodebuild archive -scheme SFI -configuration Release -destination 'generic/platform=iOS'
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    name: official core + AppGroup patch -> unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out official sing-box (with clients/apple submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show revisions
+        run: |
+          echo "core: $(git log --oneline -1)"
+          echo "client: $(git -C clients/apple log --oneline -1)"
+
+      - name: Inject runtime AppGroup resolution (only deviation from official)
+        run: |
+          python3 scripts/test_app_groups.py
+          python3 scripts/patch_app_groups.py clients/apple
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build Libbox.xcframework (official steps)
+        run: |
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          go run ./cmd/internal/build_libbox -target apple -platform ios
+          rm -rf clients/apple/Libbox.xcframework
+          cp -R Libbox.xcframework clients/apple/Libbox.xcframework
+          du -sh clients/apple/Libbox.xcframework
+
+      - name: Archive SFI (unsinged)
+        working-directory: clients/apple
+        env:
+          DISABLE_SWIFTLINT: '1'
+        run: |
+          xcodebuild archive \
+            -project sing-box.xcodeproj \
+            -scheme SFI \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/SFI.xcarchive" \
+            -skipPackagePluginValidation \
+            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            BASE_PACKAGE_IDENTIFIER=com.mQaKx.AkyLoyU \
+            APP_GROUP_IDENTIFIER=group.57234YHGTV.8FK1 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || true
+          grep -E "error:|Archive Succeeded|ARCHIVE FAILED" "$RUNNER_TEMP/xcodebuild.log" | head -20 || true
+          test -d "$RUNNER_TEMP/SFI.xcarchive" || { echo "=== xcodebuild 失败，日志尾部 ==="; tail -60 "$RUNNER_TEMP/xcodebuild.log"; exit 1; }
+
+      - name: Package IPA + verify
+        run: |
+          set -eu
+          app="$RUNNER_TEMP/SFI.xcarchive/Products/Applications/sing-box.app"
+          test -d "$app"
+          test -d "$app/PlugIns/Extension.appex"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = 'com.mQaKx.AkyLoyU'
+          test "$(/usr/libexec/PlistBuddy -c 'Print AppGroupIdentifier' "$app/Info.plist")" = 'group.57234YHGTV.8FK1'
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" output
+          ditto "$app" "$RUNNER_TEMP/ipa/Payload/sing-box.app"
+          (cd "$RUNNER_TEMP/ipa" && zip -qr "$GITHUB_WORKSPACE/output/sing-box-official-unsigned.ipa" Payload)
+          ditto -c -k "$RUNNER_TEMP/SFI.xcarchive/dSYMs" output/sing-box-dSYMs.zip
+          unzip -t output/sing-box-official-unsigned.ipa
+          shasum -a 256 output/sing-box-official-unsigned.ipa
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "official-${GITHUB_RUN_ID}" output/sing-box-official-unsigned.ipa output/sing-box-dSYMs.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Official sing-box iOS IPA (run ${GITHUB_RUN_ID})" \
+            --notes "Unsigned iOS IPA from official SagerNet/sing-box + official sing-box-for-apple (submodule pin). Only addition: runtime AppGroup resolution patch. Sign with matching main-app and extension profiles."
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-official-ipa
+          path: output/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
