@@ -69,16 +69,6 @@ jobs:
           find ../sing-box-for-android/app/build/outputs -name "*.apk" -exec cp {} output/ \;
           ls -lh output/
 
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "apk-${GITHUB_RUN_ID}" output/*.apk \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Android APK (run ${GITHUB_RUN_ID})" \
-            --notes "Unsigned Android APK. sbvpn patched core with LightXtreme private protocol + official sing-box-for-android client."
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -86,3 +76,14 @@ jobs:
           path: output/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish release
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "apk-${GITHUB_RUN_ID}" output/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Android APK (run ${GITHUB_RUN_ID})" \
+            --notes "Android APK. sbvpn patched core with LightXtreme private protocol + official sing-box-for-android client." || true
