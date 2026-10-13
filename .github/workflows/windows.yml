@@ -20,11 +20,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Clone desktop client as sibling
+      - name: Clone desktop client as sibling (with submodules)
         shell: bash
         run: |
-          git clone --depth 1 https://github.com/hyy807/sing-box-for-desktop.git ../sing-box-for-desktop
+          git clone --depth 1 --recurse-submodules https://github.com/hyy807/sing-box-for-desktop.git ../sing-box-for-desktop
           echo "client: $(git -C ../sing-box-for-desktop log --oneline -1)"
+          echo "dashboard: $(git -C ../sing-box-for-desktop/sing-box-dashboard log --oneline -1 2>/dev/null || echo 'missing')"
 
       - name: Junction sbvpn source so desktop client can find it
         shell: pwsh
