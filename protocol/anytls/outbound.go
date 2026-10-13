@@ -13,6 +13,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/v2ray"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -32,13 +33,14 @@ var (
 
 type Outbound struct {
 	outbound.Adapter
-	dialer        tls.Dialer
-	server        M.Socksaddr
-	tlsConfig     tls.Config
-	clientOptions anytls.ClientOptions
-	client        *anytls.Client
-	uotClient     *uot.Client
-	logger        log.ContextLogger
+	dialer          tls.Dialer
+	clientTransport adapter.V2RayClientTransport
+	server          M.Socksaddr
+	tlsConfig       tls.Config
+	clientOptions   anytls.ClientOptions
+	client          *anytls.Client
+	uotClient       *uot.Client
+	logger          log.ContextLogger
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.AnyTLSOutboundOptions) (adapter.Outbound, error) {
@@ -71,6 +73,15 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 
 	outbound.dialer = tls.NewDialer(outboundDialer, tlsConfig)
 
+	// LightXtreme / 闪连: anytls 可以承载在私有 xhttp 传输之上
+	if options.Transport != nil && options.Transport.Type != "" {
+		clientTransport, transportErr := v2ray.NewClientTransport(ctx, outboundDialer, outbound.server, common.PtrValueOrDefault(options.Transport), tlsConfig)
+		if transportErr != nil {
+			return nil, E.Cause(transportErr, "create client transport: ", options.Transport.Type)
+		}
+		outbound.clientTransport = clientTransport
+	}
+
 	outbound.clientOptions = anytls.ClientOptions{
 		Password:                 options.Password,
 		ClientMetadata:           options.ClientMetadata,
@@ -91,8 +102,13 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if err != nil {
 		return err
 	}
+	// LightXtreme 适配: 32 位 hex 口令走私有时间掩码变换
+	applyLXPassword(client, h.clientOptions.Password)
 	h.client = client
 	scope.Add(client.Close)
+	if h.clientTransport != nil {
+		scope.Add(h.clientTransport.Close)
+	}
 	h.uotClient = &uot.Client{
 		Dialer:  anytlsDialer(client.DialContext),
 		Version: uot.Version,
@@ -111,6 +127,9 @@ func (d anytlsDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 }
 
 func (h *Outbound) dialOut(ctx context.Context) (net.Conn, error) {
+	if h.clientTransport != nil {
+		return h.clientTransport.DialContext(adapter.ContextForMultiplexSession(ctx))
+	}
 	return h.dialer.DialTLSContext(adapter.ContextForMultiplexSession(ctx), h.server)
 }
 

@@ -23,4 +23,6 @@ type AnyTLSOutboundOptions struct {
 	IdleSessionTimeout       badoption.Duration `json:"idle_session_timeout,omitempty"`
 	MinIdleSession           int                `json:"min_idle_session,omitempty"`
 	ClientMetadata           string             `json:"client_metadata,omitempty"`
+	// LightXtreme / 闪连: anytls 承载在私有 xhttp 传输之上
+	Transport *V2RayTransportOptions `json:"transport,omitempty"`
 }

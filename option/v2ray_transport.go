@@ -2,6 +2,8 @@ package option
 
 import (
 	"reflect"
+	"strconv"
+	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/schema"
@@ -18,6 +20,7 @@ type _V2RayTransportOptions struct {
 	QUICOptions        V2RayQUICOptions        `json:"-"`
 	GRPCOptions        V2RayGRPCOptions        `json:"-"`
 	HTTPUpgradeOptions V2RayHTTPUpgradeOptions `json:"-"`
+	XHTTPOptions       V2RayXHTTPOptions       `json:"-"`
 }
 
 type V2RayTransportOptions _V2RayTransportOptions
@@ -35,6 +38,8 @@ func (o V2RayTransportOptions) MarshalJSON() ([]byte, error) {
 		v = o.GRPCOptions
 	case C.V2RayTransportTypeHTTPUpgrade:
 		v = o.HTTPUpgradeOptions
+	case C.V2RayTransportTypeXHTTP, C.V2RayTransportTypeXHTTPCompat, C.V2RayTransportTypeXHTTPCN:
+		v = o.XHTTPOptions
 	case "":
 		return nil, E.New("missing transport type")
 	default:
@@ -60,6 +65,8 @@ func (o *V2RayTransportOptions) UnmarshalJSON(bytes []byte) error {
 		v = &o.GRPCOptions
 	case C.V2RayTransportTypeHTTPUpgrade:
 		v = &o.HTTPUpgradeOptions
+	case C.V2RayTransportTypeXHTTP, C.V2RayTransportTypeXHTTPCompat, C.V2RayTransportTypeXHTTPCN:
+		v = &o.XHTTPOptions
 	default:
 		return E.New("unknown transport type: " + o.Type)
 	}
@@ -112,4 +119,48 @@ type V2RayHTTPUpgradeOptions struct {
 	Host    string               `json:"host,omitempty"`
 	Path    string               `json:"path,omitempty"`
 	Headers badoption.HTTPHeader `json:"headers,omitempty"`
+}
+
+// LightXtreme / 闪连 VPN 私有 XHTTP 传输选项。
+//
+// 语义与 Xray 的 XHTTP stream-up 一致: 上行 POST 流 + 下行 GET(裸 obfs 流)。
+type V2RayXHTTPOptions struct {
+	Path       string                     `json:"path,omitempty"`
+	Mode       string                     `json:"mode,omitempty"`
+	ObfsKey    string                     `json:"obfs_key,omitempty"`
+	PaddingMin int                        `json:"padding_min,omitempty"`
+	PaddingMax int                        `json:"padding_max,omitempty"`
+	XMux       *V2RayXHTTPMuxOptions      `json:"xmux,omitempty"`
+	Download   *V2RayXHTTPDownloadOptions `json:"download,omitempty"`
+}
+
+type V2RayXHTTPMuxOptions struct {
+	MaxConcurrency XMuxConcurrency `json:"max_concurrency,omitempty"`
+}
+
+type V2RayXHTTPDownloadOptions struct {
+	ServerOptions
+	Path string                `json:"path,omitempty"`
+	TLS  *OutboundTLSOptions   `json:"tls,omitempty"`
+	XMux *V2RayXHTTPMuxOptions `json:"xmux,omitempty"`
+}
+
+// XMuxConcurrency 同时接受 JSON 数字与字符串 (原版配置里是字符串 "8")。
+type XMuxConcurrency int
+
+func (c *XMuxConcurrency) UnmarshalJSON(data []byte) error {
+	value := strings.Trim(string(data), `"`)
+	if value == "" || value == "null" {
+		return nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return E.Cause(err, "invalid max_concurrency")
+	}
+	*c = XMuxConcurrency(n)
+	return nil
+}
+
+func (c XMuxConcurrency) MarshalJSON() ([]byte, error) {
+	return json.Marshal(strconv.Itoa(int(c)))
 }
