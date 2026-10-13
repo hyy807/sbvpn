@@ -73,6 +73,9 @@ jobs:
         working-directory: ../sing-box-for-desktop
         shell: bash
         run: |
+          # signing.local.json is required by package.ts even if not signing.
+          # Create an empty one so the build doesn't crash on readFileSync.
+          echo '{}' > signing.local.json
           pnpm install
           pnpm package:win
         env:
