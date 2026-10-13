@@ -55,11 +55,13 @@ jobs:
           cp libbox.aar ../sing-box-for-android/app/libs/libbox-legacy.aar
           ls -lh ../sing-box-for-android/app/libs/
 
-      - name: Build APK
+      - name: Build APK (debug signing — no release keystore)
         working-directory: ../sing-box-for-android
         run: |
           chmod +x gradlew
-          ./gradlew :app:clean :app:assembleOtherRelease --no-daemon
+          # assembleOtherRelease requires a release.keystore we don't have.
+          # Use debug signing instead — the APK installs fine, just with the debug key.
+          ./gradlew :app:clean :app:assembleOtherDebug --no-daemon
 
       - name: Collect APK
         run: |
