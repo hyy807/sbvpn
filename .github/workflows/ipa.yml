@@ -30,6 +30,13 @@ jobs:
           echo "core: $(git log --oneline -1)"
           echo "client: $(git -C clients/apple log --oneline -1)"
 
+      - name: Switch client to its dev branch (what official CI does on testing)
+        working-directory: clients/apple
+        run: |
+          git fetch --depth 1 origin dev
+          git checkout dev
+          git log --oneline -1
+
       - name: Inject runtime AppGroup resolution (only deviation from official)
         run: |
           python3 scripts/test_app_groups.py
