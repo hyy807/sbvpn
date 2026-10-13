@@ -58,6 +58,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Ensure version tag for build_boxdd (git describe --tags)
+        shell: bash
+        run: |
+          # build_boxdd runs `git describe --tags` in the core directory; a fork has
+          # no upstream version tags, so it exits 128. Create a local one so it resolves.
+          git tag -f v1.15.0-alpha.12 HEAD 2>/dev/null || true
+          git describe --tags || echo "describe failed, continuing"
+
       - name: Install Go toolchain deps
         run: make lib_install
 
