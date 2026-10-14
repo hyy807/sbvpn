@@ -102,32 +102,30 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           pnpm install --frozen-lockfile 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\windows-logs\pnpm-install.log"
-          pnpm package:win 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\windows-logs\package.log"
+          pnpm package:win -- x64 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\windows-logs\package.log"
 
       - name: Verify installers and signed runtime components
         run: |
           $ErrorActionPreference = 'Stop'
           $release = 'clients/desktop/release'
-          $installers = @(Get-ChildItem $release -Filter 'SFW-*.exe' -File)
-          if ($installers.Count -ne 3) { throw "expected 3 NSIS installers, found $($installers.Count)" }
-          foreach ($arch in @('win-unpacked','win-ia32-unpacked','win-arm64-unpacked')) {
-            $dir = Join-Path $release $arch
-            foreach ($relative in @('sing-box.exe','resources\daemon\sing-box-daemon.exe','resources\app.asar')) {
-              $path = Join-Path $dir $relative
-              if (-not (Test-Path $path)) { throw "missing runtime component: $path" }
-            }
-            foreach ($relative in @('sing-box.exe','resources\daemon\sing-box-daemon.exe')) {
-              $path = Join-Path $dir $relative
-              $signature = Get-AuthenticodeSignature $path
-              if ($signature.SignerCertificate.Thumbprint -ne $env:SBVPN_CERT_THUMBPRINT) {
-                throw "unexpected signer for ${path}: $($signature.SignerCertificate.Thumbprint)"
-              }
+          $installers = @(Get-ChildItem $release -Filter 'SFW-*-x64.exe' -File)
+          if ($installers.Count -ne 1) { throw "expected one x64 NSIS installer, found $($installers.Count)" }
+          $dir = Join-Path $release 'win-unpacked'
+          foreach ($relative in @('sing-box.exe','resources\daemon\sing-box-daemon.exe','resources\app.asar')) {
+            $path = Join-Path $dir $relative
+            if (-not (Test-Path $path)) { throw "missing runtime component: $path" }
+          }
+          foreach ($relative in @('sing-box.exe','resources\daemon\sing-box-daemon.exe')) {
+            $path = Join-Path $dir $relative
+            $signature = Get-AuthenticodeSignature $path
+            if ($signature.SignerCertificate.Thumbprint -ne $env:SBVPN_CERT_THUMBPRINT) {
+              throw "unexpected signer for ${path}: $($signature.SignerCertificate.Thumbprint)"
             }
           }
           New-Item -ItemType Directory -Force -Path output/windows | Out-Null
           $installers | Copy-Item -Destination output/windows
           Get-ChildItem output/windows -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content output/windows/SHA256SUMS.txt
-          if ((Get-ChildItem output/windows -Filter '*.exe').Count -ne 3) { throw 'installer collection failed' }
+          if ((Get-ChildItem output/windows -Filter '*.exe').Count -ne 1) { throw 'installer collection failed' }
 
       - name: Remove ephemeral signing material
         if: always()
