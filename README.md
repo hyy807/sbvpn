@@ -1,10 +1,47 @@
-# sing-box
+# sbvpn — sing-box core with official four-platform clients
 
-The universal proxy platform.
+This repository is a self-contained source tree for the current sbvpn core and the
+unmodified official SagerNet GUI clients required to build iOS, macOS, Android and
+Windows packages. The core keeps this repository's private Lightning protocol support;
+the client trees are vendored from fixed upstream commits and are not patched to add
+features or bypass platform security.
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/sing-box.svg)](https://repology.org/project/sing-box/versions)
+## Source layout
 
-## Documentation
+- Core: repository root (`github.com/sagernet/sing-box` plus the current sbvpn protocol changes).
+- iOS + macOS: `clients/apple`, upstream `SagerNet/sing-box-for-apple` commit
+  `56681841de346fb2185dc6eceba415f6b41bb2b2`, including Runestone.
+- Android: `clients/android`, upstream `SagerNet/sing-box-for-android` commit
+  `bc73504fcb858400a939140ad785ed92f4c9f429`.
+- Windows: `clients/desktop`, upstream `SagerNet/sing-box-for-desktop` commit
+  `2c3ba5cabfe039d4f46561218cfb3a2934e40d29`, including dashboard dependencies.
+
+Each client directory has a `.upstream-commit` file. Client sources are ordinary tracked
+files, not submodules, so a single checkout contains everything required by the four
+build workflows.
+
+## Four build workflows
+
+- `.github/workflows/ipa.yml`: normal official SFI target → unsigned IPA with all extensions.
+- `.github/workflows/macos.yml`: official standalone SFM.System target → universal staging PKG.
+- `.github/workflows/apk.yml`: official `other` and `otherLegacy` targets → ten installable debug-signed APKs.
+- `.github/workflows/windows.yml`: official Electron desktop targets → x64/x86/arm64 NSIS installers and complete runtimes.
+
+The workflows compile libbox/boxdd from the core in this repository. They do not download
+a replacement core or a moving client branch.
+
+## Signing reality
+
+- iOS requires matching provisioning profiles that grant App Groups, NetworkExtension and
+  every embedded extension's capabilities. The unsigned IPA is staging input for proper signing.
+- macOS VPN/system-extension operation requires matching Developer ID identities, restricted
+  entitlements and notarization. The unsigned PKG is staging input, not a working distribution.
+- Android debug signing is installable and keeps all client features, but is not SagerNet's release key.
+- Windows uses an ephemeral self-signed Authenticode certificate consistently across the
+  official GUI, worker and daemon. This preserves the official signer-matching security logic;
+  Windows displays an unknown-publisher warning because that certificate is not publicly trusted.
+
+## Upstream documentation
 
 https://sing-box.sagernet.org
 

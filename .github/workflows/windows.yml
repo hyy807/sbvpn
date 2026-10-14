@@ -1,120 +1,171 @@
-name: Build Windows Installer
+name: Build Windows official GUI installer (sbvpn core)
 
-# Builds official sing-box-for-desktop (Electron NSIS) with sbvpn patched core.
-# Desktop client's package.ts calls findBoxDirectory() which checks ../sing-box,
-# so we junction the sbvpn checkout there. It then runs build_boxdd itself.
+# Unmodified vendored SagerNet/sing-box-for-desktop.
+# The runtime authenticates GUI, worker and daemon by matching Authenticode
+# signer certificates. CI creates one ephemeral self-signed code-signing
+# certificate and lets the official electron-builder path sign all components.
 on:
   workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  DESKTOP_CLIENT_COMMIT: 2c3ba5cabfe039d4f46561218cfb3a2934e40d29
+  GOTOOLCHAIN: local
+
 jobs:
   windows:
-    name: sbvpn core → Windows NSIS installer
+    name: Official desktop client + sbvpn core (self-signed)
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
     steps:
-      - name: Check out sbvpn core
+      - name: Check out vendored source
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 0
+          submodules: false
 
-      - name: Clone desktop client as sibling (with submodules + tags)
-        shell: bash
+      - name: Verify source layout and provenance
         run: |
-          git clone --recurse-submodules https://github.com/hyy807/sing-box-for-desktop.git ../sing-box-for-desktop
-          echo "client: $(git -C ../sing-box-for-desktop log --oneline -1)"
-          echo "dashboard: $(git -C ../sing-box-for-desktop/sing-box-dashboard log --oneline -1 2>/dev/null || echo 'missing')"
-          # build_boxdd runs `git describe --tags` which needs the full history
-          git -C ../sing-box-for-desktop fetch --tags --unshallow 2>/dev/null || true
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path output,windows-logs | Out-Null
+          if ((Get-Content clients/desktop/.upstream-commit -Raw).Trim() -ne $env:DESKTOP_CLIENT_COMMIT) { throw 'desktop source commit mismatch' }
+          foreach ($path in @(
+            'clients/desktop/package.json',
+            'clients/desktop/scripts/package.ts',
+            'clients/desktop/scripts/afterPack.cjs',
+            'clients/desktop/dashboard/package.json',
+            'cmd/internal/build_boxdd/main.go'
+          )) { if (-not (Test-Path $path)) { throw "missing required source: $path" } }
+          git rev-parse HEAD | Set-Content output/core-commit.txt
+          $env:DESKTOP_CLIENT_COMMIT | Set-Content output/desktop-client-commit.txt
+          Get-Content clients/desktop/version.json | Set-Content output/desktop-version.json
 
-      - name: Junction sbvpn source so desktop client can find it
-        shell: pwsh
-        run: |
-          $target = $env:GITHUB_WORKSPACE
-          $parent = Split-Path $target -Parent
-          $link = Join-Path $parent "sing-box"
-          New-Item -ItemType Junction -Path $link -Target $target -Force
-          Write-Host "Junction: $link -> $target"
-          Test-Path (Join-Path $link "go.mod")
-
-      - name: Install Go
+      - name: Install official Go toolchain
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: '1.26.8'
           cache: false
 
-      - name: Install Node.js
+      - name: Install official Node.js requirement
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '26.7.0'
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '10.15.0'
+      - name: Enable package manager from official package metadata
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.13.0 --activate
+          node --version | Tee-Object windows-logs/node-version.log
+          pnpm --version | Tee-Object windows-logs/pnpm-version.log
+          go version | Tee-Object windows-logs/go-version.log
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Ensure version tag for build_boxdd (git describe --tags)
+      - name: Provide semantic core version to official builder
         shell: bash
         run: |
-          # build_boxdd runs `git describe --tags` in the core directory; a fork has
-          # no upstream version tags, so it exits 128. Create a local one so it resolves.
-          git tag -f v1.15.0-alpha.12 HEAD 2>/dev/null || true
-          git describe --tags || echo "describe failed, continuing"
+          set -euo pipefail
+          git tag -f v1.15.0-alpha.12 "$GITHUB_SHA"
+          git describe --tags --match 'v*' | tee windows-logs/core-version.log
 
-      - name: Install Go toolchain deps
-        run: make lib_install
-
-      - name: Build Windows installer
-        working-directory: ../sing-box-for-desktop
-        shell: bash
+      - name: Create ephemeral self-signed code-signing certificate
         run: |
-          # signing.local.json: package.ts validates windows.certificateFile exists.
-          echo '{"windows":{"certificateFile":"dummy.pfx","certificatePassword":"dummy"}}' > signing.local.json
-          printf '\x30\x82\x00\x00' > dummy.pfx
-          # Patch: comment out the cert existence check
-          sed -i '/Windows signing certificate does not exist/s/^/\/\//' scripts/package.ts || true
-          # ★ Disable forceCodeSigning → daemon.exe runs without Authenticode signature
-          sed -i 's/forceCodeSigning: true/forceCodeSigning: false/' electron-builder.yml || true
-          pnpm install
-          pnpm package:win
-        env:
-          GH_TOKEN: ${{ github.token }}
+          $ErrorActionPreference = 'Stop'
+          $passwordText = [Convert]::ToBase64String([byte[]](1..48 | ForEach-Object { Get-Random -Maximum 256 }))
+          $securePassword = ConvertTo-SecureString $passwordText -AsPlainText -Force
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject 'CN=sbvpn CI Ephemeral Code Signing' `
+            -CertStoreLocation 'Cert:\CurrentUser\My' `
+            -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 `
+            -KeyExportPolicy Exportable `
+            -NotAfter (Get-Date).AddDays(7)
+          Export-PfxCertificate -Cert $cert -FilePath "$env:GITHUB_WORKSPACE\clients\desktop\sbvpn-ci.pfx" -Password $securePassword | Out-Null
+          @{
+            windows = @{
+              certificateFile = 'sbvpn-ci.pfx'
+              certificatePassword = $passwordText
+            }
+          } | ConvertTo-Json -Depth 3 | Set-Content clients/desktop/signing.local.json
+          $cert.Thumbprint | Set-Content output/code-signing-thumbprint.txt
+          "SBVPN_CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          if (-not (Test-Path clients/desktop/sbvpn-ci.pfx)) { throw 'PFX export failed' }
 
-      - name: Collect installer + Electron runtime
-        shell: pwsh
+      - name: Build complete official Windows clients
+        working-directory: clients/desktop
         run: |
-          New-Item -ItemType Directory -Force -Path output | Out-Null
-          Get-ChildItem -Path "../sing-box-for-desktop/release" -Filter "*.exe" -File | Where-Object { $_.Name -notmatch "blockmap" } | ForEach-Object { Copy-Item $_.FullName "output/"; Write-Host "Copied: $($_.Name)" }
-          $unpacked = "../sing-box-for-desktop/release/win-unpacked"
-          if (Test-Path $unpacked) {
-            Write-Host "Packing win-unpacked..."
-            Compress-Archive -Path $unpacked -DestinationPath "output/sing-box-windows-portable.zip" -CompressionLevel Optimal
-            Write-Host "Packed portable.zip"
+          $ErrorActionPreference = 'Stop'
+          pnpm install --frozen-lockfile 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\windows-logs\pnpm-install.log"
+          pnpm package:win 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\windows-logs\package.log"
+
+      - name: Verify installers and signed runtime components
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = 'clients/desktop/release'
+          $installers = @(Get-ChildItem $release -Filter 'SFW-*.exe' -File)
+          if ($installers.Count -ne 3) { throw "expected 3 NSIS installers, found $($installers.Count)" }
+          foreach ($arch in @('win-unpacked','win-ia32-unpacked','win-arm64-unpacked')) {
+            $dir = Join-Path $release $arch
+            foreach ($relative in @('sing-box.exe','resources\daemon\sing-box-daemon.exe','resources\app.asar')) {
+              $path = Join-Path $dir $relative
+              if (-not (Test-Path $path)) { throw "missing runtime component: $path" }
+            }
+            foreach ($relative in @('sing-box.exe','resources\daemon\sing-box-daemon.exe')) {
+              $path = Join-Path $dir $relative
+              $signature = Get-AuthenticodeSignature $path
+              if ($signature.SignerCertificate.Thumbprint -ne $env:SBVPN_CERT_THUMBPRINT) {
+                throw "unexpected signer for $path: $($signature.SignerCertificate.Thumbprint)"
+              }
+            }
           }
-          Get-ChildItem output | ForEach-Object { Write-Host "  output/$($_.Name)  $([math]::Round($_.Length/1MB,1))MB" }
+          New-Item -ItemType Directory -Force -Path output/windows | Out-Null
+          $installers | Copy-Item -Destination output/windows
+          foreach ($arch in @('win-unpacked','win-ia32-unpacked','win-arm64-unpacked')) {
+            Compress-Archive -Path (Join-Path $release $arch) -DestinationPath "output/windows/$arch.zip" -CompressionLevel Optimal
+          }
+          Get-ChildItem output/windows -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content output/windows/SHA256SUMS.txt
+          if ((Get-ChildItem output/windows -Filter '*.exe').Count -ne 3) { throw 'installer collection failed' }
 
-      - name: Upload artifact
+      - name: Remove ephemeral signing material
+        if: always()
+        run: |
+          Remove-Item clients/desktop/sbvpn-ci.pfx,clients/desktop/signing.local.json -Force -ErrorAction SilentlyContinue
+          if ($env:SBVPN_CERT_THUMBPRINT) { Remove-Item "Cert:\CurrentUser\My\$env:SBVPN_CERT_THUMBPRINT" -Force -ErrorAction SilentlyContinue }
+
+      - name: Upload verified installers and runtimes
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbvpn-windows-official-self-signed
+          path: |
+            output/windows/
+            output/*commit.txt
+            output/desktop-version.json
+            output/code-signing-thumbprint.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sing-box-windows-installer
-          path: output/
+          name: sbvpn-windows-build-logs
+          path: windows-logs/
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Publish release
-        if: always()
+      - name: Publish verified Windows build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh release create "win-${GITHUB_RUN_ID}" output/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Windows (run ${GITHUB_RUN_ID})" \
-            --notes "sbvpn patched core + sing-box-for-desktop." || true
+          set -euo pipefail
+          gh release create "windows-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" output/windows/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "sbvpn official Windows GUI (self-signed, run ${GITHUB_RUN_ID})" \
+            --notes "Unmodified SagerNet desktop client ${DESKTOP_CLIENT_COMMIT} with sbvpn core ${GITHUB_SHA}. Three official NSIS architectures and complete runtimes. Components share one ephemeral self-signed Authenticode certificate, preserving official signer matching. Windows will show an unknown-publisher warning because the certificate is not publicly trusted."
