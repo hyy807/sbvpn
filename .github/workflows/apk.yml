@@ -36,7 +36,7 @@ jobs:
           cache: false
 
       - name: Install OpenJDK 17 (required by official libbox builder)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'

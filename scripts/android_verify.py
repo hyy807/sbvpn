@@ -22,6 +22,26 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def elf_build_id(data):
+    """Return GNU ELF build-id, which survives Gradle/NDK symbol stripping."""
+    # GNU note: namesz=4, type=NT_GNU_BUILD_ID(3), name="GNU\\0".
+    # Search both endian encodings; descriptor length is recorded in the note.
+    for endian in ("little", "big"):
+        marker = (4).to_bytes(4, endian) + (0).to_bytes(4, endian) + (3).to_bytes(4, endian) + b"GNU\0"
+        start = 0
+        while True:
+            pos = data.find(marker, start)
+            if pos < 0:
+                break
+            desc_size = int.from_bytes(data[pos + 4:pos + 8], endian)
+            if 4 <= desc_size <= 64:
+                value = data[pos + 16:pos + 16 + desc_size]
+                if len(value) == desc_size:
+                    return value.hex()
+            start = pos + 1
+    raise AssertionError("ELF GNU build-id missing")
+
+
 def verify(client, output):
     core = Path(__file__).resolve().parent.parent
     assert (client / ".upstream-commit").read_text().strip() == CLIENT_COMMIT, "Unexpected client revision"
@@ -54,7 +74,9 @@ def verify(client, output):
                 actual = {name.split('/')[1] for name in apk.namelist() if name.startswith('lib/') and name.endswith('/libbox.so')}
                 assert actual == expected, (apk_path, actual, expected)
                 for abi in actual:
-                    assert apk.read(f"lib/{abi}/libbox.so") == native[abi], f"Wrong core in {apk_path}/{abi}"
+                    apk_native = apk.read(f"lib/{abi}/libbox.so")
+                    assert PATCH_MARKER in apk_native, f"Private XHTTP package missing in {apk_path}/{abi}"
+                    assert elf_build_id(apk_native) == elf_build_id(native[abi]), f"Wrong core build-id in {apk_path}/{abi}"
                 assert "AndroidManifest.xml" in apk.namelist()
                 assert "classes.dex" in apk.namelist()
             name = f"sbvpn-{flavor}-{key}-debug.apk"
