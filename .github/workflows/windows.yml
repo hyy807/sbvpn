@@ -74,12 +74,12 @@ jobs:
         shell: bash
         run: |
           # signing.local.json: package.ts validates windows.certificateFile exists.
-          # Create a real dummy pfx + patch only the existence check.
           echo '{"windows":{"certificateFile":"dummy.pfx","certificatePassword":"dummy"}}' > signing.local.json
-          # Create a minimal valid PFX (empty cert — electron-builder will skip signing)
           printf '\x30\x82\x00\x00' > dummy.pfx
-          # Patch: comment out the "does not exist" throw so the check passes
+          # Patch: comment out the cert existence check
           sed -i '/Windows signing certificate does not exist/s/^/\/\//' scripts/package.ts || true
+          # ★ Disable forceCodeSigning → daemon.exe runs without Authenticode signature
+          sed -i 's/forceCodeSigning: true/forceCodeSigning: false/' electron-builder.yml || true
           pnpm install
           pnpm package:win
         env:
