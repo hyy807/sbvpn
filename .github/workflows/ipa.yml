@@ -62,6 +62,8 @@ jobs:
         env:
           DISABLE_SWIFTLINT: '1'
         run: |
+          # Clean build to ensure new source files are picked up
+          rm -rf ~/Library/Developer/Xcode/DerivedData/sing-box-* 2>/dev/null || true
           xcodebuild archive \
             -project sing-box.xcodeproj \
             -scheme SFI \
