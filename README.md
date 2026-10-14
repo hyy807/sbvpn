@@ -41,7 +41,7 @@ a replacement core or a moving client branch.
   every embedded extension's capabilities. The unsigned IPA is staging input for proper signing.
 - macOS VPN/system-extension operation requires matching Developer ID identities, restricted
   entitlements and notarization. The unsigned PKG is staging input, not a working distribution.
-- Android debug signing is installable and keeps all client features, but is not SagerNet's release key.
+- Android uses the official `assembleOtherRelease` / `assembleOtherLegacyRelease` tasks and an ephemeral sbvpn release certificate supplied through the client's official `LOCAL_PROPERTIES` signing interface; it is not SagerNet's private release key.
 - Windows uses an ephemeral self-signed Authenticode certificate consistently across the
   official GUI, worker and daemon. This preserves the official signer-matching security logic;
   Windows displays an unknown-publisher warning because that certificate is not publicly trusted.
