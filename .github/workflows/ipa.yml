@@ -82,6 +82,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/SFI-DerivedData" \
             -skipPackagePluginValidation \
             -onlyUsePackageVersionsFromResolvedFile \
+            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
