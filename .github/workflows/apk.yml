@@ -43,15 +43,26 @@ jobs:
 
       - name: Install exact Android SDK and NDK
         run: |
+          set -euo pipefail
           export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          # Avoid masking sdkmanager failure or treating yes's SIGPIPE as an SDK failure.
+          SDKMANAGER=""
+          for candidate in \
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "$ANDROID_HOME/cmdline-tools"/*/bin/sdkmanager \
+            "$ANDROID_HOME/tools/bin/sdkmanager"; do
+            if [ -x "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+          done
+          test -n "$SDKMANAGER" || { echo "sdkmanager not found under $ANDROID_HOME"; find "$ANDROID_HOME" -maxdepth 4 -name sdkmanager -print; exit 1; }
+          echo "sdkmanager: $SDKMANAGER"
+          # Avoid treating yes's expected SIGPIPE after license acceptance as an SDK failure.
           set +o pipefail
-          yes | sdkmanager --licenses > /dev/null
+          yes | "$SDKMANAGER" --licenses > /dev/null
           set -o pipefail
-          sdkmanager --install "platforms;android-37.1" "build-tools;37.0.0" "ndk;28.0.13004108"
+          "$SDKMANAGER" --install "platforms;android-37.1" "build-tools;37.0.0" "ndk;28.0.13004108"
           test -f "$ANDROID_HOME/licenses/android-sdk-license"
           test -f "$ANDROID_HOME/ndk/28.0.13004108/source.properties"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.0.13004108" >> "$GITHUB_ENV"
 
       - name: Build both official libbox variants, with all default ABIs and tags
