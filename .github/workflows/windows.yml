@@ -158,14 +158,3 @@ jobs:
           path: windows-logs/
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Publish verified Windows build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release create "windows-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" output/windows/* \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "sbvpn official Windows GUI (self-signed, run ${GITHUB_RUN_ID})" \
-            --notes "Unmodified SagerNet desktop client ${DESKTOP_CLIENT_COMMIT} with sbvpn core ${GITHUB_SHA}. Three official NSIS architectures and complete runtimes. Components share one ephemeral self-signed Authenticode certificate, preserving official signer matching. Windows will show an unknown-publisher warning because the certificate is not publicly trusted."

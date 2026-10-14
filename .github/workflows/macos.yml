@@ -60,15 +60,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish staging release (artifact already preserved)
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "macos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" output/*.pkg output/SHA256SUMS.txt output/BUILD-NOTES.md \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "sbvpn official macOS GUI — unsigned staging build" \
-            --notes "Pinned unmodified SagerNet Apple SFM.System client with sbvpn core. Unsigned/unnotarized PKG for signing and inspection, NOT a working VPN distribution: NetworkExtension/system-extension entitlements and helper XPC require real matching Apple signing identities/profiles. See BUILD-NOTES.md."
 
       - name: Upload complete build logs even on failure
         if: always()

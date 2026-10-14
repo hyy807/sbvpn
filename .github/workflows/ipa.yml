@@ -138,19 +138,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish unsigned staging release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh release create "ios-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            output/sbvpn-sfi-unsigned.ipa output/sbvpn-sfi-dSYMs.zip \
-            output/sbvpn-sfi-build-evidence.zip output/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "sbvpn official SFI — unsigned staging IPA" \
-            --notes-file output/BUILD-NOTES.txt
 
       - name: Upload complete build logs even on failure
         if: always()
