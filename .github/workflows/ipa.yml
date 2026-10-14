@@ -1,7 +1,7 @@
 name: Build iOS IPA (restored working recipe)
 
-# Restored from repository commit 4a5419179c97396a9cf600017ee9ea311ae72bb6.
-# Apple client source is fixed at the exact pre-four-platform working commit.
+# Restored from successful run 38549055133 (repository commit 967b8c1e).
+# Apple client source is fixed at the exact commit compiled by successful run 38549055133.
 on:
   workflow_dispatch:
 
@@ -23,14 +23,14 @@ jobs:
       - name: Verify vendored pre-four-platform Apple client
         run: |
           set -e
-          test "$(cat clients/apple-ios/.upstream-commit)" = 7ae6f34d6e83d59037e22f052ed97e00f7baa591
+          test "$(cat clients/apple-ios/.upstream-commit)" = 56681841de346fb2185dc6eceba415f6b41bb2b2
           test -f clients/apple-ios/Frameworks/Runestone/Package.swift
           test -f clients/apple-ios/SFI/Application.swift
-          test "$(git hash-object clients/apple-ios/SFI/Application.swift)" = 5e3c2fb57c76d22bf5647d917c15ebf7ebd0b8f8
-          test "$(git hash-object clients/apple-ios/SFI/Info.plist)" = 60e9bc7416897ec62a94b5593e1fd1ec19b8db17
+          test "$(git hash-object clients/apple-ios/SFI/Application.swift)" = 44d33185d2feec652247b2ddc9c17d5fd398003d
+          test "$(git hash-object clients/apple-ios/SFI/Info.plist)" = 376095ad3632221b05507fbec33726a455caba73
           test "$(git hash-object clients/apple-ios/sing-box.xcodeproj/project.pbxproj)" = f0cbe727d2557e83ce6e92586798929e7444a694
           echo "core: $(git log --oneline -1)"
-          echo "client source: 7ae6f34d6e83d59037e22f052ed97e00f7baa591"
+          echo "client source: 56681841de346fb2185dc6eceba415f6b41bb2b2"
 
       - name: Inject restored runtime AppGroup resolution
         run: |

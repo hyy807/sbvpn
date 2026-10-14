@@ -9,9 +9,11 @@ features or bypass platform security.
 ## Source layout
 
 - Core: repository root (`github.com/sagernet/sing-box` plus the current sbvpn protocol changes).
-- iOS: `clients/apple-ios`, the restored pre-four-platform Apple source at
-  `hyy807/sing-box-for-apple` commit `7ae6f34d6e83d59037e22f052ed97e00f7baa591`,
-  including Runestone. This is the frozen source used by the known-working IPA recipe.
+- iOS: `clients/apple-ios`, the exact Apple source compiled by successful run
+  `38549055133`: official `SagerNet/sing-box-for-apple` commit
+  `56681841de346fb2185dc6eceba415f6b41bb2b2`, including Runestone. The historical
+  workflow checked out a local fork first, then explicitly switched to this official
+  `dev` commit before patching and compiling.
 - macOS: `clients/apple`, upstream `SagerNet/sing-box-for-apple` commit
   `56681841de346fb2185dc6eceba415f6b41bb2b2`, including Runestone.
 - Android: `clients/android`, upstream `SagerNet/sing-box-for-android` commit
