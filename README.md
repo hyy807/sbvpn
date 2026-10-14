@@ -9,7 +9,10 @@ features or bypass platform security.
 ## Source layout
 
 - Core: repository root (`github.com/sagernet/sing-box` plus the current sbvpn protocol changes).
-- iOS + macOS: `clients/apple`, upstream `SagerNet/sing-box-for-apple` commit
+- iOS: `clients/apple-ios`, the restored pre-four-platform Apple source at
+  `hyy807/sing-box-for-apple` commit `7ae6f34d6e83d59037e22f052ed97e00f7baa591`,
+  including Runestone. This is the frozen source used by the known-working IPA recipe.
+- macOS: `clients/apple`, upstream `SagerNet/sing-box-for-apple` commit
   `56681841de346fb2185dc6eceba415f6b41bb2b2`, including Runestone.
 - Android: `clients/android`, upstream `SagerNet/sing-box-for-android` commit
   `bc73504fcb858400a939140ad785ed92f4c9f429`.
@@ -22,7 +25,7 @@ build workflows.
 
 ## Four build workflows
 
-- `.github/workflows/ipa.yml`: normal official SFI target → unsigned IPA with all extensions.
+- `.github/workflows/ipa.yml`: restored pre-four-platform SFI source and build settings → unsigned IPA.
 - `.github/workflows/macos.yml`: official standalone SFM.System target → universal staging PKG.
 - `.github/workflows/apk.yml`: official `other` and `otherLegacy` targets → ten installable debug-signed APKs.
 - `.github/workflows/windows.yml`: official Electron desktop target → one x64 NSIS installer `.exe`.

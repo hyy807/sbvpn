@@ -20,16 +20,17 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Check out exact pre-four-platform Apple client
+      - name: Verify vendored pre-four-platform Apple client
         run: |
           set -e
-          rm -rf clients/apple-ios
-          git clone --recursive https://github.com/hyy807/sing-box-for-apple.git clients/apple-ios
-          git -C clients/apple-ios checkout --detach 7ae6f34d6e83d59037e22f052ed97e00f7baa591
-          git -C clients/apple-ios submodule update --init --recursive
-          test "$(git -C clients/apple-ios rev-parse HEAD)" = 7ae6f34d6e83d59037e22f052ed97e00f7baa591
+          test "$(cat clients/apple-ios/.upstream-commit)" = 7ae6f34d6e83d59037e22f052ed97e00f7baa591
+          test -f clients/apple-ios/Frameworks/Runestone/Package.swift
+          test -f clients/apple-ios/SFI/Application.swift
+          test "$(git hash-object clients/apple-ios/SFI/Application.swift)" = 5e3c2fb57c76d22bf5647d917c15ebf7ebd0b8f8
+          test "$(git hash-object clients/apple-ios/SFI/Info.plist)" = 60e9bc7416897ec62a94b5593e1fd1ec19b8db17
+          test "$(git hash-object clients/apple-ios/sing-box.xcodeproj/project.pbxproj)" = f0cbe727d2557e83ce6e92586798929e7444a694
           echo "core: $(git log --oneline -1)"
-          echo "client: $(git -C clients/apple-ios log --oneline -1)"
+          echo "client source: 7ae6f34d6e83d59037e22f052ed97e00f7baa591"
 
       - name: Inject restored runtime AppGroup resolution
         run: |
