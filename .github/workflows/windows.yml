@@ -85,11 +85,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Collect installer
+      - name: Collect installer + Electron runtime
         shell: bash
         run: |
           mkdir -p output
-          find ../sing-box-for-desktop/release -name "*.exe" ! -name "*blockmap" -exec cp {} output/ \;
+          # Copy NSIS installer if it exists
+          find ../sing-box-for-desktop/release -maxdepth 1 -name "*.exe" ! -name "*blockmap" -exec cp {} output/ \; 2>/dev/null || true
+          # Also pack the win-unpacked directory (contains icudtl.dat, resources/, etc.)
+          # This is what users need if the NSIS installer has signing issues.
+          cd ../sing-box-for-desktop/release
+          if [ -d win-unpacked ]; then
+            echo "Packing win-unpacked..."
+            zip -r "$GITHUB_WORKSPACE/output/sing-box-windows-portable.zip" win-unpacked -x "win-unpacked/*.pdb" 2>/dev/null || true
+            echo "  Packed $(du -sh win-unpacked | cut -f1) → portable.zip"
+          fi
+          cd "$GITHUB_WORKSPACE"
           ls -lh output/ || true
 
       - name: Publish release
@@ -109,6 +119,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sing-box-windows-installer
-          path: output/*.exe
+          path: output/
           if-no-files-found: warn
           retention-days: 30
