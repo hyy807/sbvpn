@@ -58,6 +58,14 @@ jobs:
           go version | tee output/logs/go-version.log
           bash .github/patch_go_for_ios.sh 2>&1 | tee output/logs/go-ios-patch.log
 
+      - name: Apply re-signing compatibility and iOS 27 launch patch
+        run: |
+          set -euo pipefail
+          python3 scripts/test_app_groups.py 2>&1 | tee output/logs/app-group-tests.log
+          python3 scripts/patch_app_groups.py clients/apple 2>&1 | tee output/logs/re-signing-patch.log
+          grep -F 'Crash-signal bridge disabled for re-signable builds on iOS 27.' clients/apple/SFI/ApplicationDelegate.swift
+          grep -F 'public enum AppGroupResolver {' clients/apple/Library/Shared/AppConfiguration.swift
+
       - name: Build Libbox using the main repository core
         run: |
           set -euo pipefail
@@ -112,11 +120,13 @@ jobs:
             cp clients/apple/"$target"/*.entitlements "output/signing-reference/$target/"
           done
           printf '%s\n' \
-            'Unsigned staging IPA: not an install-ready or verified working VPN distribution.' \
-            'Client: unmodified official SagerNet/sing-box-for-apple at the recorded fixed revision; core: this sbvpn repository.' \
-            'Normal SFI includes packet tunnel, widget, file provider, share, action and intents extensions. No jailbreak conversion or AppGroup fallback.' \
+            'Unsigned staging IPA for re-signing.' \
+            'Client base: official SagerNet/sing-box-for-apple at the recorded fixed revision; core: this repository.' \
+            'Build-time compatibility patch dynamically resolves the App Group granted by the actual signature and falls back to private app storage when none is granted, so the host app can launch under arbitrary re-signing.' \
+            'The iOS 27-incompatible Go/native crash-signal bridge is disabled; normal libbox setup remains enabled.' \
+            'Normal SFI includes packet tunnel, widget, file provider, share, action and intents extensions. No jailbreak conversion.' \
             'Sign embedded frameworks and all extensions before the main app, using matching identities, bundle IDs and provisioning profiles.' \
-            'Profiles must authorize the official AppGroup, NetworkExtension and other target capabilities. Preserve shared group identifiers across targets.' \
+            'Without a provisioning profile granting packet-tunnel-provider, iOS can launch the app but cannot create a system VPN tunnel. That OS restriction cannot be bypassed by application code.' \
             'signing-reference contains upstream entitlement templates, not resolved signing payloads; substitute build settings and use valid profiles.' \
             'Build success does not establish device launch or VPN functionality; correct signing and device validation are still required.' \
             > output/BUILD-NOTES.txt
