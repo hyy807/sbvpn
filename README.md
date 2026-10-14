@@ -25,7 +25,7 @@ build workflows.
 - `.github/workflows/ipa.yml`: normal official SFI target → unsigned IPA with all extensions.
 - `.github/workflows/macos.yml`: official standalone SFM.System target → universal staging PKG.
 - `.github/workflows/apk.yml`: official `other` and `otherLegacy` targets → ten installable debug-signed APKs.
-- `.github/workflows/windows.yml`: official Electron desktop targets → x64/x86/arm64 NSIS installers and complete runtimes.
+- `.github/workflows/windows.yml`: official Electron desktop targets → x64/x86/arm64 NSIS installers.
 
 The workflows compile libbox/boxdd from the core in this repository. They do not download
 a replacement core or a moving client branch.

@@ -126,9 +126,6 @@ jobs:
           }
           New-Item -ItemType Directory -Force -Path output/windows | Out-Null
           $installers | Copy-Item -Destination output/windows
-          foreach ($arch in @('win-unpacked','win-ia32-unpacked','win-arm64-unpacked')) {
-            Compress-Archive -Path (Join-Path $release $arch) -DestinationPath "output/windows/$arch.zip" -CompressionLevel Optimal
-          }
           Get-ChildItem output/windows -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content output/windows/SHA256SUMS.txt
           if ((Get-ChildItem output/windows -Filter '*.exe').Count -ne 3) { throw 'installer collection failed' }
 
