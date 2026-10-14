@@ -1,7 +1,9 @@
-name: Build Android APK
+name: Build Android official release APKs (sbvpn core)
 
-# Official SagerNet Android client, unchanged; THIS repository supplies the patched core.
-# Pairing: testing libbox API + official dev client 1.15.0-alpha.12 (not stable 1.14.3).
+# Mirrors SagerNet/sing-box testing's official Android pipeline:
+# four per-ABI libbox jobs -> merge_aar -> official release Gradle tasks.
+# The vendored client is unchanged. CI supplies only a temporary signing input
+# through the client's official LOCAL_PROPERTIES interface.
 on:
   workflow_dispatch:
 
@@ -10,110 +12,170 @@ permissions:
 
 env:
   ANDROID_CLIENT_COMMIT: bc73504fcb858400a939140ad785ed92f4c9f429
+  GOTOOLCHAIN: local
 
 jobs:
-  apk:
-    name: sbvpn core → official Android APKs
+  library:
+    name: Official libbox (${{ matrix.go_arch }})
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        go_arch: ['386', amd64, arm, arm64]
     steps:
-      - name: Check out sbvpn core
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: false
-
-      - name: Verify vendored official Android source
-        run: |
-          test "$(cat clients/android/.upstream-commit)" = "$ANDROID_CLIENT_COMMIT"
-          test -f clients/android/gradlew
-          test -f clients/android/app/build.gradle.kts
-
-      - name: Install Go
+      - name: Verify vendored official client revision
+        run: test "$(cat clients/android/.upstream-commit)" = "$ANDROID_CLIENT_COMMIT"
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: 1.26.8
           cache: false
-
-      - name: Install OpenJDK 17 (required by official libbox builder)
-        uses: actions/setup-java@v5
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+      - name: Setup OpenJDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
-          java-version: '17'
-
-      - name: Install exact Android SDK and NDK
+          java-version: 17
+      - name: Set official paired version tag
+        run: git tag v1.15.0-alpha.12 -f
+      - name: Build library with official command
         run: |
           set -euo pipefail
-          export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          SDKMANAGER=""
-          for candidate in \
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "$ANDROID_HOME/cmdline-tools"/*/bin/sdkmanager \
-            "$ANDROID_HOME/tools/bin/sdkmanager"; do
-            if [ -x "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
-          done
-          test -n "$SDKMANAGER" || { echo "sdkmanager not found under $ANDROID_HOME"; find "$ANDROID_HOME" -maxdepth 4 -name sdkmanager -print; exit 1; }
-          echo "sdkmanager: $SDKMANAGER"
-          # Avoid treating yes's expected SIGPIPE after license acceptance as an SDK failure.
-          set +o pipefail
-          yes | "$SDKMANAGER" --licenses > /dev/null
-          set -o pipefail
-          "$SDKMANAGER" --install "platforms;android-37.1" "build-tools;37.0.0" "ndk;28.0.13004108"
-          test -f "$ANDROID_HOME/licenses/android-sdk-license"
-          test -f "$ANDROID_HOME/ndk/28.0.13004108/source.properties"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.0.13004108" >> "$GITHUB_ENV"
-
-      - name: Build both official libbox variants, with all default ABIs and tags
-        run: |
-          mkdir -p android-logs
-          make lib_install 2>&1 | tee android-logs/lib-install.log
+          make lib_install
           export PATH="$PATH:$(go env GOPATH)/bin"
-          go run ./cmd/internal/build_libbox -target android 2>&1 | tee android-logs/libbox.log
-          test -s libbox.aar
-          test -s libbox-legacy.aar
+          go run ./cmd/internal/build_libbox -target android -platform android/${{ matrix.go_arch }}
+          mkdir -p dist/${{ matrix.go_arch }}
+          mv libbox.aar libbox-legacy.aar dist/${{ matrix.go_arch }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Upload library
+        uses: actions/upload-artifact@v4
+        with:
+          name: libbox-android-${{ matrix.go_arch }}
+          path: dist
+          compression-level: 0
+
+  client:
+    name: Official Android ${{ matrix.variant }} release
+    runs-on: ubuntu-latest
+    needs: library
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: other
+            task: ':app:assembleOtherRelease'
+            output: 'app/build/outputs/apk/other/release/*.apk'
+          - variant: other-legacy
+            task: ':app:assembleOtherLegacyRelease'
+            output: 'app/build/outputs/apk/otherLegacy/release/*.apk'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 1
+          submodules: false
+      - name: Verify vendored official client revision
+        run: test "$(cat clients/android/.upstream-commit)" = "$ANDROID_CLIENT_COMMIT"
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.8
+          cache: false
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+      - name: Setup OpenJDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Set official paired version tag
+        run: git tag v1.15.0-alpha.12 -f
+      - name: Download per-ABI libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: libbox-android-*
+          path: libbox-inputs
+          merge-multiple: true
+      - name: Merge libraries with official core tool
+        run: |
+          go run ./cmd/internal/merge_aar -output libbox.aar libbox-inputs/*/libbox.aar
+          go run ./cmd/internal/merge_aar -output libbox-legacy.aar libbox-inputs/*/libbox-legacy.aar
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        with:
+          cache-provider: basic
+      - name: Create temporary release signing input
+        shell: bash
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 24)"
+          rm -f clients/android/app/release.keystore
+          keytool -genkeypair -noprompt \
+            -keystore clients/android/app/release.keystore \
+            -storepass "$password" -keypass "$password" \
+            -alias sbvpn -keyalg RSA -keysize 3072 -validity 3650 \
+            -dname 'CN=sbvpn Release, OU=Build, O=sbvpn, C=CN'
+          printf 'KEYSTORE_PASS=%s\nALIAS_NAME=sbvpn\nALIAS_PASS=%s\n' "$password" "$password" \
+            | base64 -w0 > "$RUNNER_TEMP/local-properties.b64"
+          echo "LOCAL_PROPERTIES=$(cat "$RUNNER_TEMP/local-properties.b64")" >> "$GITHUB_ENV"
+      - name: Update version with official core tool
+        run: go run -v ./cmd/internal/update_android_version --ci
+      - name: Build with official Gradle release task
+        run: |
+          set -euo pipefail
           mkdir -p clients/android/app/libs
-          cp libbox.aar libbox-legacy.aar clients/android/app/libs/
-
-      - name: Build complete official other and legacy clients (debug signing)
-        run: |
-          # No upstream release key is available. Debug is installable and does not remove features.
-          # The release path upstream is assembleOtherRelease + assembleOtherLegacyRelease.
+          cp libbox.aar libbox-legacy.aar clients/android/app/libs
           cd clients/android
-          ./gradlew :app:clean :app:assembleOtherDebug :app:assembleOtherLegacyDebug --no-daemon 2>&1 | tee "$GITHUB_WORKSPACE/android-logs/gradle.log"
-          git diff --exit-code
-
-      - name: Verify every APK and collect provenance
+          ./gradlew --build-cache --parallel ${{ matrix.task }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Prepare official output
         run: |
-          python3 scripts/android_verify.py clients/android output/android
-          for apk in output/android/*.apk; do
-            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk" >> android-logs/signatures.log
-            "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" >> android-logs/packages.log
-          done
-          cp android-logs/signatures.log android-logs/packages.log output/android/
-
-      - name: Upload verified APKs and provenance
+          set -euo pipefail
+          mkdir -p dist
+          cp clients/android/${{ matrix.output }} dist/
+          VERSION_CODE=$(grep VERSION_CODE clients/android/version.properties | cut -d= -f2)
+          VERSION_NAME=$(grep VERSION_NAME clients/android/version.properties | cut -d= -f2)
+          printf '{\n  "version_code": %s,\n  "version_name": "%s",\n  "client_commit": "%s",\n  "core_commit": "%s"\n}\n' \
+            "$VERSION_CODE" "$VERSION_NAME" "$ANDROID_CLIENT_COMMIT" "$GITHUB_SHA" \
+            > dist/SFA-version-metadata.json
+      - name: Upload official release APKs
         uses: actions/upload-artifact@v4
         with:
-          name: sing-box-android-apk
-          path: output/android/
+          name: binary-android-apks-${{ matrix.variant }}
+          path: dist
           if-no-files-found: error
-          retention-days: 30
 
-      - name: Upload build logs even on failure
-        if: always()
-        uses: actions/upload-artifact@v4
+  publish:
+    name: Publish official Android outputs
+    runs-on: ubuntu-latest
+    needs: client
+    steps:
+      - name: Download APK artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: android-build-logs
-          path: android-logs/
-          retention-days: 30
-
-      - name: Publish verified build
+          pattern: binary-android-apks-*
+          path: dist
+          merge-multiple: true
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "apk-${GITHUB_RUN_ID}" output/android/* \
+          set -euo pipefail
+          gh release create "android-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" dist/* \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Android APK (run ${GITHUB_RUN_ID})" \
-            --notes "Unmodified official SagerNet Android client $ANDROID_CLIENT_COMMIT; sbvpn patched core $GITHUB_SHA. Complete other/API24 and legacy/API21 variants, all four ABIs and universal APKs. Debug-signed (not SagerNet's release signing key). Provenance and SHA256SUMS included."
+            --title "sbvpn official Android release APKs" \
+            --notes "Unmodified official SagerNet Android client ${ANDROID_CLIENT_COMMIT}, built by the upstream four-ABI libbox/merge_aar/release-task pipeline with sbvpn core ${GITHUB_SHA}. APKs use an ephemeral sbvpn release certificate because upstream private signing secrets are unavailable."
