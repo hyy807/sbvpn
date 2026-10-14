@@ -73,15 +73,13 @@ jobs:
         working-directory: ../sing-box-for-desktop
         shell: bash
         run: |
-          # signing.local.json: package.ts requires windows.certificateFile (non-empty) + certificatePassword.
-          # Create a dummy pfx file so the existence check passes, then patch package.ts
-          # to skip actual signing (we ship unsigned).
+          # signing.local.json: package.ts validates windows.certificateFile exists.
+          # Create a real dummy pfx + patch only the existence check.
           echo '{"windows":{"certificateFile":"dummy.pfx","certificatePassword":"dummy"}}' > signing.local.json
-          touch dummy.pfx
-          # Patch: skip the certificateFile existence check in package.ts
-          sed -i 's/Windows signing certificate does not exist/\/\/ skip cert check/' scripts/package.ts || true
-          # Also skip the actual signing by commenting out the signAndEditConfig call
-          sed -i 's/signingConfiguration/\/\/ signingConfiguration/g' scripts/package.ts || true
+          # Create a minimal valid PFX (empty cert — electron-builder will skip signing)
+          printf '\x30\x82\x00\x00' > dummy.pfx
+          # Patch: comment out the "does not exist" throw so the check passes
+          sed -i '/Windows signing certificate does not exist/s/^/\/\//' scripts/package.ts || true
           pnpm install
           pnpm package:win
         env:
