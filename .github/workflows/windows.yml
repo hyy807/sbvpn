@@ -102,18 +102,6 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           ls -lh output/ || true
 
-      - name: Publish release
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          gh release create "win-${GITHUB_RUN_ID}" output/*.exe \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Windows Installer (run ${GITHUB_RUN_ID})" \
-            --notes "NSIS installer. sbvpn patched core with LightXtreme private protocol + official sing-box-for-desktop."
-
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -122,3 +110,15 @@ jobs:
           path: output/
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Publish release
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create "win-${GITHUB_RUN_ID}" output/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Windows (run ${GITHUB_RUN_ID})" \
+            --notes "sbvpn patched core + sing-box-for-desktop." || true
