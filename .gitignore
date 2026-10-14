@@ -21,3 +21,7 @@
 CLAUDE.md
 AGENTS.md
 /.claude/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
