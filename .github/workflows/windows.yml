@@ -120,7 +120,7 @@ jobs:
               $path = Join-Path $dir $relative
               $signature = Get-AuthenticodeSignature $path
               if ($signature.SignerCertificate.Thumbprint -ne $env:SBVPN_CERT_THUMBPRINT) {
-                throw "unexpected signer for $path: $($signature.SignerCertificate.Thumbprint)"
+                throw "unexpected signer for ${path}: $($signature.SignerCertificate.Thumbprint)"
               }
             }
           }
