@@ -86,21 +86,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Collect installer + Electron runtime
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p output
-          # Copy NSIS installer if it exists
-          find ../sing-box-for-desktop/release -maxdepth 1 -name "*.exe" ! -name "*blockmap" -exec cp {} output/ \; 2>/dev/null || true
-          # Also pack the win-unpacked directory (contains icudtl.dat, resources/, etc.)
-          # This is what users need if the NSIS installer has signing issues.
-          cd ../sing-box-for-desktop/release
-          if [ -d win-unpacked ]; then
-            echo "Packing win-unpacked..."
-            zip -r "$GITHUB_WORKSPACE/output/sing-box-windows-portable.zip" win-unpacked -x "win-unpacked/*.pdb" 2>/dev/null || true
-            echo "  Packed $(du -sh win-unpacked | cut -f1) → portable.zip"
-          fi
-          cd "$GITHUB_WORKSPACE"
-          ls -lh output/ || true
+          New-Item -ItemType Directory -Force -Path output | Out-Null
+          Get-ChildItem -Path "../sing-box-for-desktop/release" -Filter "*.exe" -File | Where-Object { $_.Name -notmatch "blockmap" } | ForEach-Object { Copy-Item $_.FullName "output/"; Write-Host "Copied: $($_.Name)" }
+          $unpacked = "../sing-box-for-desktop/release/win-unpacked"
+          if (Test-Path $unpacked) {
+            Write-Host "Packing win-unpacked..."
+            Compress-Archive -Path $unpacked -DestinationPath "output/sing-box-windows-portable.zip" -CompressionLevel Optimal
+            Write-Host "Packed portable.zip"
+          }
+          Get-ChildItem output | ForEach-Object { Write-Host "  output/$($_.Name)  $([math]::Round($_.Length/1MB,1))MB" }
 
       - name: Upload artifact
         if: always()
