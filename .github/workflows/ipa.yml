@@ -1,159 +1,104 @@
-name: Build iOS official SFI IPA (sbvpn core)
+name: Build iOS IPA (restored working recipe)
 
-# The Apple client is vendored in this repository, including Runestone.
-# Do not switch branches or patch Swift/AppGroup behavior during the build.
-# This unsigned staging IPA requires valid signing for every app/extension.
+# Restored from repository commit 4a5419179c97396a9cf600017ee9ea311ae72bb6.
+# Apple client source is fixed at the exact pre-four-platform working commit.
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   ipa:
-    name: Vendored official SFI + sbvpn core (unsigned)
-    runs-on: macos-26
+    name: restored Apple source + AppGroup patch -> unsigned IPA
+    runs-on: macos-latest
     timeout-minutes: 120
-    env:
-      APPLE_CLIENT_COMMIT: 56681841de346fb2185dc6eceba415f6b41bb2b2
-      GOTOOLCHAIN: local
-      DISABLE_SWIFTLINT: '1'
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-    defaults:
-      run:
-        shell: bash
     steps:
-      - name: Check out main repository with vendored clients
+      - name: Check out current core
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: false
 
-      - name: Record source provenance and check official client inputs
+      - name: Check out exact pre-four-platform Apple client
         run: |
-          set -euo pipefail
-          mkdir -p output/logs
-          test ! -e clients/apple/.git
-          test -f clients/apple/sing-box.xcodeproj/project.pbxproj
-          test -f clients/apple/sing-box.xcodeproj/xcshareddata/xcschemes/SFI.xcscheme
-          test -f clients/apple/Frameworks/Runestone/Package.swift
-          test -f .github/patch_go_for_ios.sh
-          test -f .github/go_ios_cpu_features.patch
-          printf '%s\n' "$APPLE_CLIENT_COMMIT" > output/apple-client-commit.txt
-          git rev-parse HEAD > output/core-commit.txt
-          cp clients/apple/sing-box.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved output/Package.resolved
-          cat output/core-commit.txt output/apple-client-commit.txt
-          xcodebuild -version | tee output/logs/xcode-version.log
-          xcrun --sdk iphoneos --show-sdk-version | tee output/logs/ios-sdk-version.log
+          set -e
+          rm -rf clients/apple-ios
+          git clone --recursive https://github.com/hyy807/sing-box-for-apple.git clients/apple-ios
+          git -C clients/apple-ios checkout --detach 7ae6f34d6e83d59037e22f052ed97e00f7baa591
+          git -C clients/apple-ios submodule update --init --recursive
+          test "$(git -C clients/apple-ios rev-parse HEAD)" = 7ae6f34d6e83d59037e22f052ed97e00f7baa591
+          echo "core: $(git log --oneline -1)"
+          echo "client: $(git -C clients/apple-ios log --oneline -1)"
 
-      - name: Install official Go toolchain
+      - name: Inject restored runtime AppGroup resolution
+        run: |
+          python3 scripts/test_app_groups.py
+          python3 scripts/patch_app_groups.py clients/apple-ios
+
+      - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.8'
+          go-version-file: go.mod
           cache: false
 
-      - name: Apply official Go iOS CPU patch (not a client patch)
+      - name: Build Libbox.xcframework with restored command
         run: |
-          set -euo pipefail
-          go version | tee output/logs/go-version.log
-          bash .github/patch_go_for_ios.sh 2>&1 | tee output/logs/go-ios-patch.log
-
-      - name: Apply re-signing compatibility and iOS 27 launch patch
-        run: |
-          set -euo pipefail
-          python3 scripts/test_app_groups.py 2>&1 | tee output/logs/app-group-tests.log
-          python3 scripts/patch_app_groups.py clients/apple 2>&1 | tee output/logs/re-signing-patch.log
-          grep -F 'Crash-signal bridge disabled for re-signable builds on iOS 27.' clients/apple/SFI/ApplicationDelegate.swift
-          grep -F 'public enum AppGroupResolver {' clients/apple/Library/Shared/AppConfiguration.swift
-
-      - name: Build Libbox using the main repository core
-        run: |
-          set -euo pipefail
-          make lib_install 2>&1 | tee output/logs/lib-install.log
+          make lib_install
           export PATH="$PATH:$(go env GOPATH)/bin"
-          go run ./cmd/internal/build_libbox -target apple -platform ios/arm64 2>&1 | tee output/logs/libbox.log
-          test -f Libbox.xcframework/Info.plist
-          rm -rf clients/apple/Libbox.xcframework
-          cp -R Libbox.xcframework clients/apple/Libbox.xcframework
-          du -sh clients/apple/Libbox.xcframework
+          go run ./cmd/internal/build_libbox -target apple -platform ios
+          rm -rf clients/apple-ios/Libbox.xcframework
+          cp -R Libbox.xcframework clients/apple-ios/Libbox.xcframework
+          du -sh clients/apple-ios/Libbox.xcframework
 
-      - name: Archive normal SFI with all official extensions (unsigned)
-        working-directory: clients/apple
+      - name: Archive SFI with restored settings
+        working-directory: clients/apple-ios
+        env:
+          DISABLE_SWIFTLINT: '1'
         run: |
-          set -euo pipefail
+          rm -rf ~/Library/Developer/Xcode/DerivedData/sing-box-* 2>/dev/null || true
           xcodebuild archive \
             -project sing-box.xcodeproj \
             -scheme SFI \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/SFI.xcarchive" \
-            -derivedDataPath "$RUNNER_TEMP/SFI-DerivedData" \
             -skipPackagePluginValidation \
-            -onlyUsePackageVersionsFromResolvedFile \
             IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            BASE_PACKAGE_IDENTIFIER=com.mQaKx.AkyLoyU \
+            APP_GROUP_IDENTIFIER=group.57234YHGTV.8FK1 \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            2>&1 | tee "$GITHUB_WORKSPACE/output/logs/xcodebuild.log"
+            CODE_SIGNING_REQUIRED=NO > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || true
+          grep -E "error:|Archive Succeeded|ARCHIVE FAILED" "$RUNNER_TEMP/xcodebuild.log" | head -20 || true
+          test -d "$RUNNER_TEMP/SFI.xcarchive" || { echo "=== xcodebuild failed ==="; tail -60 "$RUNNER_TEMP/xcodebuild.log"; exit 1; }
 
-      - name: Verify complete SFI archive and package unsigned IPA
+      - name: Package restored unsigned IPA
         run: |
-          set -euo pipefail
+          set -eu
           app="$RUNNER_TEMP/SFI.xcarchive/Products/Applications/sing-box.app"
-          test -f "$RUNNER_TEMP/SFI.xcarchive/Info.plist"
           test -d "$app"
-          for extension in Extension WidgetExtension FileProviderExtension ShareExtension ActionExtension; do
-            test -f "$app/PlugIns/$extension.appex/Info.plist"
-          done
-          test -f "$app/Extensions/IntentsExtension.appex/Info.plist"
-          # Libbox is linked by the official Library target, not embedded as a dylib.
-          test -d "$app/Frameworks/Library.framework"
-          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist" > output/app-bundle-id.txt
-          /usr/libexec/PlistBuddy -c 'Print AppGroupIdentifier' "$app/Info.plist" > output/app-group-id.txt
-          mkdir -p "$RUNNER_TEMP/ipa/Payload" output/signing-reference
+          test -d "$app/PlugIns/Extension.appex"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = 'com.mQaKx.AkyLoyU'
+          test "$(/usr/libexec/PlistBuddy -c 'Print AppGroupIdentifier' "$app/Info.plist")" = 'group.57234YHGTV.8FK1'
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" output
           ditto "$app" "$RUNNER_TEMP/ipa/Payload/sing-box.app"
-          (cd "$RUNNER_TEMP/ipa" && zip -qr "$GITHUB_WORKSPACE/output/sbvpn-sfi-unsigned.ipa" Payload)
-          test -d "$RUNNER_TEMP/SFI.xcarchive/dSYMs"
-          ditto -c -k "$RUNNER_TEMP/SFI.xcarchive/dSYMs" output/sbvpn-sfi-dSYMs.zip
-          for target in SFI Extension WidgetExtension FileProviderExtension ShareExtension ActionExtension IntentsExtension; do
-            mkdir -p "output/signing-reference/$target"
-            cp clients/apple/"$target"/*.entitlements "output/signing-reference/$target/"
-          done
-          printf '%s\n' \
-            'Unsigned staging IPA for re-signing.' \
-            'Client base: official SagerNet/sing-box-for-apple at the recorded fixed revision; core: this repository.' \
-            'Build-time compatibility patch dynamically resolves the App Group granted by the actual signature and falls back to private app storage when none is granted, so the host app can launch under arbitrary re-signing.' \
-            'The iOS 27-incompatible Go/native crash-signal bridge is disabled; normal libbox setup remains enabled.' \
-            'Normal SFI includes packet tunnel, widget, file provider, share, action and intents extensions. No jailbreak conversion.' \
-            'Sign embedded frameworks and all extensions before the main app, using matching identities, bundle IDs and provisioning profiles.' \
-            'Without a provisioning profile granting packet-tunnel-provider, iOS can launch the app but cannot create a system VPN tunnel. That OS restriction cannot be bypassed by application code.' \
-            'signing-reference contains upstream entitlement templates, not resolved signing payloads; substitute build settings and use valid profiles.' \
-            'Build success does not establish device launch or VPN functionality; correct signing and device validation are still required.' \
-            > output/BUILD-NOTES.txt
-          unzip -t output/sbvpn-sfi-unsigned.ipa
-          shasum -a 256 output/*.ipa output/*dSYMs.zip > output/SHA256SUMS.txt
-          cat output/SHA256SUMS.txt
-          (cd output && zip -qr sbvpn-sfi-build-evidence.zip *.txt Package.resolved signing-reference)
+          (cd "$RUNNER_TEMP/ipa" && zip -qr "$GITHUB_WORKSPACE/output/sing-box-iOS-unsigned.ipa" Payload)
+          unzip -t output/sing-box-iOS-unsigned.ipa
+          shasum -a 256 output/sing-box-iOS-unsigned.ipa
 
-      - name: Upload IPA and build evidence before release
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: sbvpn-sfi-unsigned-${{ github.run_attempt }}
-          path: |
-            output/*.ipa
-            output/*.zip
-            output/*.txt
-            output/Package.resolved
-            output/signing-reference/
+          name: sing-box-iOS-restored-working
+          path: output/sing-box-iOS-unsigned.ipa
           if-no-files-found: error
           retention-days: 30
 
-
-      - name: Upload complete build logs even on failure
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sbvpn-sfi-build-logs-${{ github.run_attempt }}
-          path: output/logs/
-          if-no-files-found: warn
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
           retention-days: 30

@@ -5,15 +5,6 @@ import sys
 
 root = Path(sys.argv[1])
 helper = Path(__file__).with_name('AppGroupResolver.swift').read_text()
-marker_file = root / 'Library/Shared/AppConfiguration.swift'
-launch_file = root / 'SFI/ApplicationDelegate.swift'
-resolver_marker = 'public enum AppGroupResolver {'
-launch_marker = 'Crash-signal bridge disabled for re-signable builds on iOS 27.'
-if resolver_marker in marker_file.read_text() and launch_marker in launch_file.read_text():
-    print('AppGroup and iOS 27 launch patches already applied')
-    raise SystemExit(0)
-if resolver_marker in marker_file.read_text() or launch_marker in launch_file.read_text():
-    raise RuntimeError('partial iOS re-signing patch detected')
 
 def edit(name, old, new):
     path = root / name
@@ -27,20 +18,14 @@ edit(name, '        return value\n    }()\n\n    public static var teamID', '   
 with (root / name).open('a') as f:
     f.write('\n' + helper)
 edit('Library/Shared/FilePath.swift', 'public static let sharedDirectory = defaultSharedDirectory!', 'public static let sharedDirectory = AppGroupResolver.resolved?.url ?? AppGroupResolver.diagnosticDirectory')
-# The host app must initialize even when the re-signing profile grants no App
-# Group. FilePath.sharedDirectory already falls back to the app sandbox. The
-# packet tunnel still requires a real App Group and is guarded below.
+edit('Library/Shared/ServiceSetup.swift', '        let options = LibboxSetupOptions()', '        #if os(iOS)\n            try AppGroupResolver.requireSharedContainer()\n        #endif\n        let options = LibboxSetupOptions()')
 edit('Library/Network/ExtensionProvider.swift', '        let basePath: String', '        #if os(iOS)\n            try AppGroupResolver.requireSharedContainer()\n            if let requested = startOptions?["resolvedAppGroup"] as? String, requested != AppGroupResolver.resolved?.id {\n                throw ExtensionStartupError(AppGroupResolver.signingDiagnosis)\n            }\n        #endif\n        let basePath: String')
 edit('Library/Network/ExtensionProfile.swift', '        guard let manager else { return }\n        try await fetchProfile()', '        #if os(iOS)\n            try AppGroupResolver.requireSharedContainer()\n        #endif\n        guard let manager else { return }\n        try await fetchProfile()')
 edit('Library/Network/ExtensionProfile.swift', '        let profileID = await SharedPreferences.selectedProfileID.get()\n        guard let profile', '        #if os(iOS)\n            try AppGroupResolver.requireSharedContainer()\n            options["resolvedAppGroup"] = AppGroupResolver.resolved.map { NSString(string: $0.id) }\n        #endif\n        let profileID = await SharedPreferences.selectedProfileID.get()\n        guard let profile')
-# iOS 27.0.1 traps during the Go crash-signal bridge at process launch
-# (runtime.raise_trampoline -> runtime.asmcgocall). Crash reporting is optional;
-# normal libbox setup remains intact.
-edit('SFI/ApplicationDelegate.swift', '''        LibboxPrepareCrashSignalHandlers()
-        NativeCrashReporter.installForCurrentProcess()
-        LibboxReinstallCrashSignalHandlers()
-        HangWatchdog.installForCurrentProcess()''', '''        // Crash-signal bridge disabled for re-signable builds on iOS 27.
-        // It is observability only and must not prevent application launch.''')
+edit('SFI/ApplicationDelegate.swift', '        NSLog("Here I stand")', '        guard AppGroupResolver.resolved != nil else {\n            NSLog("%@", AppGroupResolver.signingDiagnosis)\n            return true\n        }\n        NSLog("Here I stand")')
+edit('SFI/Application.swift', '        Task { @MainActor in', '        guard AppGroupResolver.resolved != nil else { return }\n        Task { @MainActor in')
+edit('SFI/Application.swift', '            MainView()', '            if AppGroupResolver.resolved == nil {\n                VStack(spacing: 20) {\n                    Text("App Group signing required").font(.title2)\n                    Text(AppGroupResolver.signingDiagnosis).textSelection(.enabled)\n                }.padding()\n            } else {\n            MainView()')
+edit('SFI/Application.swift', '                .environmentObject(taildropInbox)', '                .environmentObject(taildropInbox)\n            }')
 for name in ['FileProviderExtension/FileProviderExtension.swift', 'WidgetExtension/WidgetTunnelControl.swift']:
     edit(name, '        return value\n    }()\n\n', '        return value\n    }()\n\n') if False else None
     text = (root / name).read_text()
