@@ -1,18 +1,37 @@
-name: Build iOS IPA (restored working recipe)
+name: Build iOS IPA (unsigned, self-sign ready)
 
-# Restored from successful run 38549055133 (repository commit 967b8c1e).
-# Apple client source is fixed at the exact commit compiled by successful run 38549055133.
+# 产出未签名 IPA：不绑定任何证书 / Team ID / 描述文件。
+# App Group 由 AppGroupResolver 在运行时从「签名后的 entitlements」自动探测，
+# 构建期写入的 bundle id / app group 仅为 fallback，签名工具（Esign / Sideloadly /
+# AltStore / TrollStore）可任意修改，不需要重新构建。
 on:
   workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: 'Base bundle identifier (fallback only)'
+        type: string
+        default: 'com.sbvpn.client'
+      app_group:
+        description: 'App Group fallback, 形如 group.<TEAMID>.<name>'
+        type: string
+        default: 'group.sbvpn.client'
+      deployment_target:
+        description: 'iPhoneOS deployment target (构建失败会自动回退 18.0)'
+        type: string
+        default: '15.0'
 
 permissions:
   contents: read
 
 jobs:
   ipa:
-    name: restored Apple source + AppGroup patch -> unsigned IPA
+    name: unsigned IPA (universal self-sign)
     runs-on: macos-latest
     timeout-minutes: 120
+    env:
+      BUNDLE_ID: ${{ inputs.bundle_id }}
+      APP_GROUP: ${{ inputs.app_group }}
+      DEPLOY_TARGET: ${{ inputs.deployment_target }}
     steps:
       - name: Check out current core
         uses: actions/checkout@v4
@@ -30,9 +49,8 @@ jobs:
           test "$(git hash-object clients/apple-ios/SFI/Info.plist)" = 376095ad3632221b05507fbec33726a455caba73
           test "$(git hash-object clients/apple-ios/sing-box.xcodeproj/project.pbxproj)" = f0cbe727d2557e83ce6e92586798929e7444a694
           echo "core: $(git log --oneline -1)"
-          echo "client source: 56681841de346fb2185dc6eceba415f6b41bb2b2"
 
-      - name: Inject restored runtime AppGroup resolution
+      - name: Inject universal runtime AppGroup resolution
         run: |
           python3 scripts/test_app_groups.py
           python3 scripts/patch_app_groups.py clients/apple-ios
@@ -43,7 +61,7 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Build Libbox.xcframework with restored command
+      - name: Build Libbox.xcframework
         run: |
           make lib_install
           export PATH="$PATH:$(go env GOPATH)/bin"
@@ -52,54 +70,88 @@ jobs:
           cp -R Libbox.xcframework clients/apple-ios/Libbox.xcframework
           du -sh clients/apple-ios/Libbox.xcframework
 
-      - name: Archive SFI with restored settings
+      - name: Archive SFI (no signing, with deployment fallback)
         working-directory: clients/apple-ios
         env:
           DISABLE_SWIFTLINT: '1'
         run: |
+          set -u
           rm -rf ~/Library/Developer/Xcode/DerivedData/sing-box-* 2>/dev/null || true
-          xcodebuild archive \
-            -project sing-box.xcodeproj \
-            -scheme SFI \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/SFI.xcarchive" \
-            -skipPackagePluginValidation \
-            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
-            BASE_PACKAGE_IDENTIFIER=com.mQaKx.AkyLoyU \
-            APP_GROUP_IDENTIFIER=group.57234YHGTV.8FK1 \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || true
-          grep -E "error:|Archive Succeeded|ARCHIVE FAILED" "$RUNNER_TEMP/xcodebuild.log" | head -20 || true
-          test -d "$RUNNER_TEMP/SFI.xcarchive" || { echo "=== xcodebuild failed ==="; tail -60 "$RUNNER_TEMP/xcodebuild.log"; exit 1; }
+          archive="$RUNNER_TEMP/SFI.xcarchive"
+          for target in "$DEPLOY_TARGET" 18.0; do
+            echo "=== trying IPHONEOS_DEPLOYMENT_TARGET=$target ==="
+            rm -rf "$archive"
+            xcodebuild archive \
+              -project sing-box.xcodeproj \
+              -scheme SFI \
+              -configuration Release \
+              -destination 'generic/platform=iOS' \
+              -archivePath "$archive" \
+              -skipPackagePluginValidation \
+              IPHONEOS_DEPLOYMENT_TARGET="$target" \
+              BASE_PACKAGE_IDENTIFIER="$BUNDLE_ID" \
+              APP_GROUP_IDENTIFIER="$APP_GROUP" \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO > "$RUNNER_TEMP/xcodebuild-$target.log" 2>&1 || true
+            grep -E "error:|Archive Succeeded|ARCHIVE FAILED" "$RUNNER_TEMP/xcodebuild-$target.log" | head -15 || true
+            if [ -d "$archive" ]; then
+              echo "ARCHIVED_WITH_TARGET=$target" | tee "$RUNNER_TEMP/used-target.txt"
+              break
+            fi
+          done
+          if [ ! -d "$archive" ]; then
+            echo "=== xcodebuild failed for every deployment target ==="
+            tail -80 "$RUNNER_TEMP/xcodebuild-$DEPLOY_TARGET.log" || true
+            exit 1
+          fi
 
-      - name: Package restored unsigned IPA
+      - name: Package unsigned IPA
         run: |
           set -eu
           app="$RUNNER_TEMP/SFI.xcarchive/Products/Applications/sing-box.app"
           test -d "$app"
           test -d "$app/PlugIns/Extension.appex"
-          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = 'com.mQaKx.AkyLoyU'
-          test "$(/usr/libexec/PlistBuddy -c 'Print AppGroupIdentifier' "$app/Info.plist")" = 'group.57234YHGTV.8FK1'
           mkdir -p "$RUNNER_TEMP/ipa/Payload" output
           ditto "$app" "$RUNNER_TEMP/ipa/Payload/sing-box.app"
+          # 未签名包不得残留签名/描述文件，否则自签工具会冲突
+          for p in \
+            "$RUNNER_TEMP/ipa/Payload/sing-box.app" \
+            "$RUNNER_TEMP/ipa/Payload/sing-box.app/PlugIns/Extension.appex" \
+            "$RUNNER_TEMP/ipa/Payload/sing-box.app/PlugIns"/*; do
+            [ -e "$p" ] || continue
+            rm -f "$p/embedded.mobileprovision"
+            rm -rf "$p/_CodeSignature"
+          done
+          find "$RUNNER_TEMP/ipa/Payload" -name "_CodeSignature" -o -name "embedded.mobileprovision" | head
           (cd "$RUNNER_TEMP/ipa" && zip -qr "$GITHUB_WORKSPACE/output/sing-box-iOS-unsigned.ipa" Payload)
           unzip -t output/sing-box-iOS-unsigned.ipa
           shasum -a 256 output/sing-box-iOS-unsigned.ipa
+          {
+            echo "bundle_id=$BUNDLE_ID"
+            echo "extension_bundle_id=$BUNDLE_ID.Extension"
+            echo "app_group_fallback=$APP_GROUP"
+            echo "deployment_target=$(cat "$RUNNER_TEMP/used-target.txt" 2>/dev/null || echo unknown)"
+            echo "core_commit=$(git rev-parse HEAD)"
+            /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist" | sed 's/^/actual_app_bundle_id=/'
+            /usr/libexec/PlistBuddy -c 'Print MinimumOSVersion' "$app/Info.plist" | sed 's/^/min_os=/'
+          } > output/BUILD.txt
+          cat output/BUILD.txt
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: sing-box-iOS-restored-working
+          name: sing-box-iOS-unsigned
           path: output/sing-box-iOS-unsigned.ipa
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload build log
+      - name: Upload build metadata + logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xcodebuild-log
-          path: ${{ runner.temp }}/xcodebuild.log
+          name: build-meta
+          path: |
+            output/BUILD.txt
+            ${{ runner.temp }}/xcodebuild-*.log
           if-no-files-found: ignore
           retention-days: 30
