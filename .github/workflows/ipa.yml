@@ -78,7 +78,7 @@ jobs:
           set -u
           rm -rf ~/Library/Developer/Xcode/DerivedData/sing-box-* 2>/dev/null || true
           archive="$RUNNER_TEMP/SFI.xcarchive"
-          for target in "$DEPLOY_TARGET" 18.0; do
+          for target in "$DEPLOY_TARGET" 16.0 17.0 18.0; do
             echo "=== trying IPHONEOS_DEPLOYMENT_TARGET=$target ==="
             rm -rf "$archive"
             xcodebuild archive \
